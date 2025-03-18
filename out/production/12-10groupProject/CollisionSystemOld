@@ -1,0 +1,316 @@
+import edu.princeton.cs.algs4.*;
+import java.awt.Color;
+
+public class CollisionSystem {
+    private static final double HZ = 10;    // number of redraw events per clock tick
+    private double t  = 0.0;          // simulation clock time
+    private Particle[] particles;     // the array of particles
+    private int size;
+    private int n = 500;
+    private Cell root;
+
+    /**
+     * Initializes a system with the specified collection of particles.
+     * The individual particles will be mutated during the simulation.
+     *
+     * @param  particles the array of particles
+     */
+
+    private MinPQ<Event> pq;          // the priority queue
+
+    private void predict(Particle a, double limit) {
+        if (a == null) return;
+        double beta = 0.005;//只有在很小的时间deltaT里才可以使用predict出的结果
+        // particle-particle collisions
+        for (int i = 0; i < particles.length; i++) {
+            double deltaT = a.timeToHit(particles[i]);
+            if(deltaT<=beta||t+deltaT<=limit){
+                pq.insert(new Event(t + deltaT, a, particles[i]));
+            }
+        }
+        // particle-wall collisions
+        double deltaTX = a.timeToHitVerticalWall();
+        double deltaTY = a.timeToHitHorizontalWall();
+        if (deltaTX<=beta||t + deltaTX <= limit) pq.insert(new Event(t + deltaTX, a, null));
+        if (deltaTY<=beta||t + deltaTY <= limit) pq.insert(new Event(t + deltaTY, null, a));
+     }
+
+    public CollisionSystem(Particle[] particles, int size) {
+        this.particles = particles.clone();   // defensive copy
+        this.size = size;
+    }
+
+    // redraw all particles
+    private void redraw() {
+        StdDraw.clear();
+        for (Particle particle : particles) {
+            particle.draw();
+        }
+        StdDraw.show();
+        StdDraw.pause(1);
+    }
+
+    public double processingEvents(double limit){
+        pq=new MinPQ<Event>();
+        for (int i = 0; i < particles.length; i++) {
+            predict(particles[i], limit);
+        }
+        pq.insert(new Event(0, null, null));
+
+        if (t < limit||!pq.isEmpty()) {
+            Event e = pq.delMin();
+            if (e.isValid()) {
+                return e.time-t;
+        }else return -1;//??
+    }
+
+    /**
+     * Simulates the system of particles for the specified amount of time.
+     *
+     * @param  limit the amount of time
+     */
+
+    public void simulate(double limit) {
+        for (Particle particle: particles) particle.prepare(1.0 / HZ / n);
+        // initialize PQ with collision events and redraw event
+
+            for (int i = 0; i < particles.length; i++){
+                double time =processingEvents(limit);
+                particles[i].move(time);
+                moveAndCollision(time);
+                t = time;
+            }
+                redraw();// redraw event
+        }
+    }
+ }
+
+
+    public void printInformation(double[] times, int[] index) {
+        double dt = 1.0 / HZ / n;
+        int test = 0;
+        for (Particle particle: particles) particle.prepare(dt);
+        // the main event-driven simulation loop
+        while (test < times.length) {
+            Particle particle = particles[index[test]];
+            moveAndCollision(1.0 / HZ, n);
+            if (t > times[test]) {
+                for (Particle particle0: particles) particle0.complete(dt);
+                StdOut.print(particle.getRx() + " " + particle.getRy() + " " + particle.getVx() + " " + particle.getVy() + "\n");
+                for (Particle particle0: particles) particle0.prepare(dt);
+                test++;
+            }
+        }
+    }
+
+
+    private void updateAcc() {
+        BH_generate_octTree();
+        root.COM();
+        for (Particle particle: particles) {
+            particle.updateAcc(root);
+        }
+    }
+
+    private void update_acc() {
+        for (Particle particle: particles) {
+            particle.setAx(0);
+            particle.setAy(0);
+        }
+        for(int i = 0; i < particles.length; i++){
+//            double temp1 = 0;
+//            double temp2 = 0;
+//            for (int j = 0; j < particles.length; j++) {
+//                temp1 += particles[i].GravitationalForceOfX(particles[j]);
+//                temp2 += particles[i].GravitationalForceOfY(particles[j]);
+//            }
+//            particles[i].setAx(temp1/particles[i].getMass());
+//            particles[i].setAy(temp2/particles[i].getMass());
+            for (int j = i + 1; j < particles.length; j++) {
+                particles[i].acceleration(particles[j]);
+            }
+        }
+    }
+
+    private void collision(double dt) {//判断碰撞
+        for (Particle particle: particles) particle.complete(dt);
+        for (int i = 0; i < particles.length; i++) {
+            if (particles[i].collisionToHorizontalWall(size)) {
+                particles[i].bounceOffHorizontalWall();
+            }
+            if (particles[i].collisionToVerticalWall(size)) {
+                particles[i].bounceOffVerticalWall();
+            }
+            for (int j = i + 1; j < particles.length; j++) {
+                if (particles[i].collision(particles[j])) {
+                    particles[i].bounceOff(particles[j]);
+                }
+            }
+        }
+        for (Particle particle: particles) particle.prepare(dt);
+    }
+
+    private void move(double dt) {//先更新加速度，再让它碰撞
+        updateAcc();
+        for (Particle particle : particles) {
+            particle.accelerate(dt);
+            particle.move(dt);
+        }
+    }
+
+    private void moveAndCollision(double t) {//让move和collision合起来
+            move(processingEvents(t));
+            collision(processingEvents(t));
+            t += processingEvents(t) - t;
+    }
+
+private static class Event implements Comparable<Event> {
+    private final double time;         // time that event is scheduled to occur
+    private final Particle a, b;       // particles involved in event, possibly null
+    private final int countA, countB;  // collision counts at event creation
+
+
+    // create a new event to occur at time t involving a and b
+    public Event(double t, Particle a, Particle b) {
+        this.time = t;
+        this.a    = a;
+        this.b    = b;
+        if (a != null) countA = a.count();
+        else           countA = -1;
+        if (b != null) countB = b.count();
+        else           countB = -1;
+    }
+
+    // compare times when two events will occur
+    public int compareTo(Event that) {
+        return Double.compare(this.time, that.time);
+    }
+
+    // has any collision occurred between when event was created and now?
+    public boolean isValid() {
+        if (a != null && a.count() != countA) return false;
+        if (b != null && b.count() != countB) return false;
+        return true;
+    }
+
+
+    private void printKineticEnergy() {
+        double kineticEnergy = 0;
+        for (Particle particle : particles) {
+            kineticEnergy += particle.kineticEnergy();
+        }
+        StdOut.print(kineticEnergy + "\n");
+    }
+
+    public void BH_generate_octTree() {
+
+        // Initialize root of octTree
+        //这里的size指的是坐标轴width
+        root = new Cell(size);
+
+        for (Particle particle : particles) {
+            Cell.addParticle(particle, root);
+//            Cell cell = root;
+//
+//            // Find which node to add the body to
+//            while (!cell.isHasSubCells()) {
+//                int sc = cell.BH_locate_subcell(cell, particle);
+//                cell = cell.getSubCells()[sc];
+//            }
+//            //这里的cell是 没有子cell的情况！！！
+//            cell.BH_add_to_cell(cell, particle);
+        }
+    }
+
+    /***************************************************************************
+     *  An event during a particle collision simulation. Each event contains
+     *  the time at which it will occur (assuming no supervening actions)
+     *  and the particles a and b involved.
+     *
+     *    -  a and b both null:      redraw event
+     *    -  a null, b not null:     collision with vertical wall
+     *    -  a not null, b null:     collision with horizontal wall
+     *    -  a and b both not null:  binary collision between a and b
+     *
+     ***************************************************************************/
+
+    /**
+     * Unit tests the {@code CollisionSystem} data type.
+     * Reads in the particle collision system from a standard input
+     * (or generates {@code N} random particles if a command-line integer
+     * is specified); simulates the system.
+     *
+     * @param args the command-line arguments
+     */
+    public static void main(String[] args) {
+        String line = StdIn.readLine();
+        if (line.equals("gui")) {
+            int squareSize;
+            // the array of particles
+            Particle[] particles;
+            squareSize = StdIn.readInt();//区域大小
+//            StdDraw.setCanvasSize(squareSize, squareSize);
+            // or read from standard input
+
+            int n = StdIn.readInt();
+            particles = new Particle[n];
+            for (int i = 0; i < n; i++) {
+                double rx = StdIn.readDouble();
+                double ry = StdIn.readDouble();
+                double vx = StdIn.readDouble();
+                double vy = StdIn.readDouble();
+                double radius = StdIn.readDouble();
+                double mass = StdIn.readDouble();
+                int r = StdIn.readInt();
+                int g = StdIn.readInt();
+                int b = StdIn.readInt();
+                Color color = new Color(r, g, b);
+                particles[i] = new Particle(rx, ry, vx, vy, radius, mass, color);
+            }
+            StdDraw.setCanvasSize(600, 600);
+            StdDraw.setXscale(0,squareSize);
+            StdDraw.setYscale(0,squareSize);
+
+            // enable double buffering
+            StdDraw.enableDoubleBuffering();
+
+            CollisionSystem system = new CollisionSystem(particles, squareSize);
+            system.simulate(1000);
+        }
+        else if (line.equals("terminal")){
+            int squareSize;
+            Particle[] particles;
+            squareSize = StdIn.readInt();//区域大小
+            int n = StdIn.readInt();
+            particles = new Particle[n];
+            for (int i = 0; i < n; i++) {
+                double rx = StdIn.readDouble();
+                double ry = StdIn.readDouble();
+                double vx = StdIn.readDouble();
+                double vy = StdIn.readDouble();
+                double radius = StdIn.readDouble();
+                double mass = StdIn.readDouble();
+                int r = StdIn.readInt();
+                int g = StdIn.readInt();
+                int b = StdIn.readInt();
+                Color color = new Color(r, g, b);
+                particles[i] = new Particle(rx, ry, vx, vy, radius, mass, color);
+            }
+
+            int num_test = StdIn.readInt();
+            double[] time = new double[num_test];
+            int[] index = new int[num_test];
+            for (int i = 0; i < num_test; i++) {
+                time[i] = StdIn.readDouble();//第一个数字表示秒数
+                index[i] = StdIn.readInt();//第二个数字表示index
+            }
+            CollisionSystem system = new CollisionSystem(particles, squareSize);
+            system.BH_generate_octTree();
+            system.printInformation(time,index);
+        }
+        else StdOut.print("Illegal input. ");
+    }
+}
+
+
+}
